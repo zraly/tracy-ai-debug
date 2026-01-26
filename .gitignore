@@ -1,0 +1,7 @@
+/vendor
+/composer.lock
+/temp
+/.ai-debug
+/.idea
+/.vscode
+.agent/

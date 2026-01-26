@@ -1,0 +1,41 @@
+{
+    "name": "zraly/tracy-ai-debug",
+    "description": "Tracy exception logger for AI agents - exports errors to JSON format",
+    "keywords": [
+        "nette",
+        "tracy",
+        "debug",
+        "ai",
+        "logging",
+        "exceptions"
+    ],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Nette Community"
+        }
+    ],
+    "require": {
+        "php": ">=8.1",
+        "tracy/tracy": "^2.10",
+        "nette/di": "^3.0",
+        "nette/schema": "^1.2",
+        "nette/utils": "^4.0"
+    },
+    "require-dev": {
+        "nette/tester": "^2.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "Zraly\\AiDebug\\": "src/"
+        }
+    },
+    "extra": {
+        "nette": {
+            "extensions": {
+                "aiDebug": "Zraly\\AiDebug\\DI\\AiDebugExtension"
+            }
+        }
+    },
+    "minimum-stability": "stable"
+}
