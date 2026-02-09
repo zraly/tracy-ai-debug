@@ -29,20 +29,13 @@ Once configured, Tracy errors are exported to JSON files in the configured direc
 
 ## AI Agent Workflow
 
-### Recommended (assistant-agnostic)
+This package keeps AI guidance minimal and tool-agnostic:
 
-1. **Read latest error JSON**
-   ```bash
-   cat log/ai-debug/latest.json || cat "$(ls -t log/ai-debug/*.json | head -n 1)"
-   ```
-2. **Analyze root cause**: `type`, `message`, `file`, `line`, `codeSnippet`, `stackTrace`.
-3. **Fix minimal scope** in source code.
-4. **Verify** by running project tests/checks.
-5. **Reproduce once** and confirm that no new error JSON is generated for the same issue.
+- `/AGENTS.md` is the canonical project instruction file.
+- `/docs/ai/fix-tracy-error.md` is a short reusable fix flow.
 
-### Optional: custom command/workflow in your AI assistant
-
-If your assistant supports custom commands, create one such as `@fix-tracy-error` and map it to the same five steps above.
+If your AI tool supports project instruction files, point it to `AGENTS.md`.  
+If it supports custom commands/skills, map them to `docs/ai/fix-tracy-error.md`.
 
 ## Features
 
