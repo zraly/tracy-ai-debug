@@ -5,56 +5,44 @@ Composer package that logs Tracy exceptions to JSON files for AI agents.
 ## Installation
 
 ```bash
-composer require zraly/tracy-ai-debug
+composer require --dev zraly/tracy-ai-debug
 ```
 
-## Configuration
+## Configuration (development only)
 
-Register the extension in your `config.neon`:
+If the package is installed in `require-dev`, register the extension only in a development config file (for example `config/local.neon`).
 
 ```neon
+# config/local.neon
 extensions:
-    aiDebug: Zraly\AiDebug\DI\AiDebugExtension
+	aiDebug: Zraly\AiDebug\DI\AiDebugExtension
 
 aiDebug:
-    logDir: %appDir%/../log/ai-debug      # Default
-    enabled: true                          # Default, disable in production
-    snippetLines: 10                       # Lines of code context
+	logDir: %appDir%/../log/ai-debug      # Default
+	enabled: true                          # Default
+	snippetLines: 10                       # Lines of code context
 ```
 
 ## Usage
 
-Once configured, all Tracy exceptions are automatically logged to JSON files in the specified directory.
+Once configured, Tracy errors are exported to JSON files in the configured directory.
 
+## AI Agent Workflow
 
+### Recommended (assistant-agnostic)
 
-### AI Agent Workflow
-
-Create `.agent/workflows/fix-error.md` in your project:
-
-````markdown
----
-description: Analyze and fix the latest Tracy error from AI debug log
----
-
-# Fix Tracy Error
-
-1. **Read the latest error**
+1. **Read latest error JSON**
    ```bash
-   cat log/ai-debug/latest.json
+   cat log/ai-debug/latest.json || cat "$(ls -t log/ai-debug/*.json | head -n 1)"
    ```
+2. **Analyze root cause**: `type`, `message`, `file`, `line`, `codeSnippet`, `stackTrace`.
+3. **Fix minimal scope** in source code.
+4. **Verify** by running project tests/checks.
+5. **Reproduce once** and confirm that no new error JSON is generated for the same issue.
 
-2. **Analyze**: Check `type`, `message`, `file`, `line`, and `codeSnippet`
+### Optional: custom command/workflow in your AI assistant
 
-3. **View the file**: Open the file at the error line
-
-4. **Fix**: Implement the necessary code changes
-
-5. **Verify**: Have user reproduce - no new JSON should appear
-````
-
-**Usage:** Type `@fix-error` in your AI assistant chat. The agent will read the workflow and fix the latest error.
-
+If your assistant supports custom commands, create one such as `@fix-tracy-error` and map it to the same five steps above.
 
 ## Features
 
@@ -62,9 +50,10 @@ description: Analyze and fix the latest Tracy error from AI debug log
 - ✅ Includes code snippets around error
 - ✅ Captures full stack trace with arguments
 - ✅ Extracts context variables
+- ✅ Redacts common secret-like keys in context variables
 - ✅ Request information (URI, method, IP)
 - ✅ Previous exception chain
-- ✅ Creates `latest.json` symlink for quick access
+- ✅ Keeps `latest.json` pointer for quick access (symlink with regular-file fallback)
 - ✅ Preserves original Tracy logging
 - ✅ Captures BlueScreen errors in development mode
 - ✅ Handles string messages (warnings, notices)

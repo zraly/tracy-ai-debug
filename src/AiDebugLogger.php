@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Zraly\AiDebug;
 
+use DateTimeImmutable;
 use Tracy\ILogger;
 use Throwable;
 use Nette\Utils\Json;
@@ -31,16 +32,36 @@ use function is_array;
 use function is_object;
 use function is_resource;
 use function get_resource_type;
-use function array_map;
 use function method_exists;
 use function is_readable;
 use function is_file;
+use function str_contains;
+use function strtolower;
 
 /**
  * Logger that exports exceptions to JSON files for AI agents.
  */
 class AiDebugLogger implements ILogger
 {
+    private const REDACTED_VALUE = '[REDACTED]';
+
+    private const SENSITIVE_KEYS = [
+        'password',
+        'passwd',
+        'pwd',
+        'token',
+        'secret',
+        'apikey',
+        'api_key',
+        'authorization',
+        'cookie',
+        'session',
+        'jwt',
+        'bearer',
+        'private_key',
+        'client_secret',
+    ];
+
     private ?ILogger $originalLogger = null;
 
     public function __construct(
@@ -123,13 +144,7 @@ class AiDebugLogger implements ILogger
         $filepath = $this->logDir . '/' . $filename;
 
         FileSystem::write($filepath, Json::encode($data, Json::PRETTY));
-
-        // Also create/update latest.json symlink for easy access
-        $latestPath = $this->logDir . '/latest.json';
-        if (is_link($latestPath)) {
-            unlink($latestPath);
-        }
-        @symlink($filename, $latestPath);
+        $this->updateLatestFile($filename);
     }
 
     private function logStringToJson(string $message, string $priority): void
@@ -158,18 +173,12 @@ class AiDebugLogger implements ILogger
         $filepath = $this->logDir . '/' . $filename;
 
         FileSystem::write($filepath, Json::encode($data, Json::PRETTY));
-
-        // Also create/update latest.json symlink for easy access
-        $latestPath = $this->logDir . '/latest.json';
-        if (is_link($latestPath)) {
-            unlink($latestPath);
-        }
-        @symlink($filename, $latestPath);
+        $this->updateLatestFile($filename);
     }
 
     private function generateStringFilename(string $message): string
     {
-        $timestamp = date('Y-m-d_H-i-s');
+        $timestamp = $this->formatTimestampForFilename();
         $hash = substr(md5($message), 0, 8);
         return "{$timestamp}_{$hash}.json";
     }
@@ -270,13 +279,20 @@ class AiDebugLogger implements ILogger
 
         $sanitized = [];
         foreach ($variables as $key => $value) {
-            $sanitized[$key] = $this->sanitizeValue($value);
+            $sanitized[$key] = $this->sanitizeValue(
+                $value,
+                is_string($key) ? $key : (string) $key,
+            );
         }
         return $sanitized;
     }
 
-    private function sanitizeValue(mixed $value): mixed
+    private function sanitizeValue(mixed $value, ?string $key = null): mixed
     {
+        if ($this->isSensitiveKey($key)) {
+            return self::REDACTED_VALUE;
+        }
+
         return match (true) {
             is_null($value) => null,
             is_bool($value) => $value,
@@ -284,11 +300,40 @@ class AiDebugLogger implements ILogger
             is_string($value) => mb_strlen($value) > 500 ? mb_substr($value, 0, 500) . '...' : $value,
             is_array($value) => count($value) > 50
                 ? ['__truncated__' => true, 'count' => count($value)]
-                : array_map(fn($v) => $this->sanitizeValue($v), $value),
+                : $this->sanitizeArray($value),
             is_object($value) => ['__class__' => get_class($value)],
             is_resource($value) => ['__resource__' => get_resource_type($value)],
             default => ['__type__' => gettype($value)],
         };
+    }
+
+    private function sanitizeArray(array $value): array
+    {
+        $sanitized = [];
+        foreach ($value as $nestedKey => $nestedValue) {
+            $sanitized[$nestedKey] = $this->sanitizeValue(
+                $nestedValue,
+                is_string($nestedKey) ? $nestedKey : (string) $nestedKey,
+            );
+        }
+
+        return $sanitized;
+    }
+
+    private function isSensitiveKey(?string $key): bool
+    {
+        if ($key === null || $key === '') {
+            return false;
+        }
+
+        $normalizedKey = strtolower($key);
+        foreach (self::SENSITIVE_KEYS as $sensitiveKey) {
+            if (str_contains($normalizedKey, $sensitiveKey)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function ensureLogDir(): void
@@ -298,8 +343,34 @@ class AiDebugLogger implements ILogger
 
     private function generateFilename(Throwable $exception): string
     {
-        $timestamp = date('Y-m-d_H-i-s');
+        $timestamp = $this->formatTimestampForFilename();
         $hash = substr(md5($exception->getMessage() . $exception->getFile() . $exception->getLine()), 0, 8);
         return "{$timestamp}_{$hash}.json";
+    }
+
+    private function formatTimestampForFilename(): string
+    {
+        return (new DateTimeImmutable())->format('Y-m-d_H-i-s-u');
+    }
+
+    private function updateLatestFile(string $filename): void
+    {
+        $latestPath = $this->logDir . '/latest.json';
+        $sourcePath = $this->logDir . '/' . $filename;
+
+        if (is_link($latestPath) || is_file($latestPath)) {
+            @unlink($latestPath); // @ - file may disappear between check and unlink
+        }
+
+        if ($this->tryCreateLatestSymlink($filename, $latestPath)) {
+            return;
+        }
+
+        FileSystem::copy($sourcePath, $latestPath, true);
+    }
+
+    protected function tryCreateLatestSymlink(string $filename, string $latestPath): bool
+    {
+        return @symlink($filename, $latestPath); // @ - symlink is unavailable on some platforms/permissions
     }
 }

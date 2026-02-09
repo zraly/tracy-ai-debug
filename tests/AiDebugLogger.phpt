@@ -11,7 +11,6 @@ use Tracy\ILogger;
 require __DIR__ . '/bootstrap.php';
 
 $tempDir = createTempDir();
-$logDir = $tempDir . '/log';
 $errorLogDir = $tempDir . '/ai-debug';
 
 // Mock original logger
@@ -26,7 +25,29 @@ class MockLogger implements ILogger
 	}
 }
 
-test('Logger delegates to original logger', function () use ($logDir, $errorLogDir) {
+class ContextException extends RuntimeException
+{
+	public function __construct(
+		private array $context,
+	) {
+		parent::__construct('Context exception');
+	}
+
+	public function getContext(): array
+	{
+		return $this->context;
+	}
+}
+
+class NoSymlinkLogger extends AiDebugLogger
+{
+	protected function tryCreateLatestSymlink(string $filename, string $latestPath): bool
+	{
+		return false;
+	}
+}
+
+test('Logger delegates to original logger', function () use ($errorLogDir) {
 	$mockLogger = new MockLogger;
 	$logger = new AiDebugLogger($errorLogDir);
 	$logger->setOriginalLogger($mockLogger);
@@ -39,18 +60,18 @@ test('Logger delegates to original logger', function () use ($logDir, $errorLogD
 });
 
 test('Logger creates JSON file for exceptions', function () use ($errorLogDir) {
-	FileSystem::delete($errorLogDir); // Clean up
+	FileSystem::delete($errorLogDir);
 	$logger = new AiDebugLogger($errorLogDir);
 
 	$exception = new RuntimeException('Test Exception', 123);
 	$logger->log($exception, ILogger::ERROR);
 
 	$files = glob($errorLogDir . '/*.json');
-    $files = array_filter($files, fn($f) => basename($f) !== 'latest.json');
+	$files = array_filter($files, fn($f) => basename($f) !== 'latest.json');
 	Assert::count(1, $files);
 
 	$latest = $errorLogDir . '/latest.json';
-	Assert::true(is_link($latest));
+	Assert::true(is_link($latest) || is_file($latest));
 
 	$content = Json::decode(FileSystem::read($latest));
 	Assert::same('RuntimeException', $content->type);
@@ -71,4 +92,66 @@ test('Logger creates JSON file for string messages', function () use ($errorLogD
 	$content = Json::decode(FileSystem::read($errorLogDir . '/latest.json'));
 	Assert::same('StringMessage', $content->type);
 	Assert::same('Just a string error', $content->message);
+});
+
+test('Logger does not write JSON when disabled', function () use ($errorLogDir) {
+	FileSystem::delete($errorLogDir);
+
+	$mockLogger = new MockLogger;
+	$logger = new AiDebugLogger($errorLogDir, 10, false);
+	$logger->setOriginalLogger($mockLogger);
+
+	$result = $logger->log(new RuntimeException('Disabled exception'), ILogger::ERROR);
+
+	Assert::same('logged', $result);
+	Assert::count(1, $mockLogger->logs);
+	Assert::false(is_dir($errorLogDir));
+});
+
+test('Logger creates unique filenames for repeated exceptions', function () use ($errorLogDir) {
+	FileSystem::delete($errorLogDir);
+	$logger = new AiDebugLogger($errorLogDir);
+
+	$logger->log(new RuntimeException('Repeated exception'), ILogger::ERROR);
+	$logger->log(new RuntimeException('Repeated exception'), ILogger::ERROR);
+
+	$files = glob($errorLogDir . '/*.json');
+	$files = array_filter($files, fn($f) => basename($f) !== 'latest.json');
+	Assert::count(2, $files);
+});
+
+test('Logger redacts sensitive context variables', function () use ($errorLogDir) {
+	FileSystem::delete($errorLogDir);
+	$logger = new AiDebugLogger($errorLogDir);
+
+	$exception = new ContextException([
+		'password' => 'top-secret',
+		'apiToken' => 'token-value',
+		'nested' => [
+			'client_secret' => 'hidden',
+			'safeValue' => 'visible',
+		],
+	]);
+	$logger->log($exception, ILogger::ERROR);
+
+	$content = Json::decode(FileSystem::read($errorLogDir . '/latest.json'), true);
+	Assert::same('[REDACTED]', $content['context']['variables']['password']);
+	Assert::same('[REDACTED]', $content['context']['variables']['apiToken']);
+	Assert::same('[REDACTED]', $content['context']['variables']['nested']['client_secret']);
+	Assert::same('visible', $content['context']['variables']['nested']['safeValue']);
+});
+
+test('Logger falls back to regular latest.json file when symlink fails', function () use ($errorLogDir) {
+	FileSystem::delete($errorLogDir);
+	$logger = new NoSymlinkLogger($errorLogDir);
+
+	$logger->log(new RuntimeException('Fallback symlink exception'), ILogger::ERROR);
+
+	$latestPath = $errorLogDir . '/latest.json';
+	Assert::true(is_file($latestPath));
+	Assert::false(is_link($latestPath));
+
+	$content = Json::decode(FileSystem::read($latestPath));
+	Assert::same('RuntimeException', $content->type);
+	Assert::same('Fallback symlink exception', $content->message);
 });
